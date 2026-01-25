@@ -14,7 +14,6 @@ from curl_cffi import requests as cffi_requests
 # =======================
 # 1) SİMGE LİSTESİ
 # =======================
-# ✅ Buraya SENİN UZUN SYMBOLS listenin TAMAMINI aynen yapıştır.
 SYMBOLS = [
 "A1YEN.IS",
 "ACSEL.IS",
@@ -650,29 +649,33 @@ VOLUME_TOP_N = 10
 
 FAST_MODE = True            # True: daha hızlı (sleep yok)
 
-STATE_DIR = "state"
-STATE_FILE = os.path.join(STATE_DIR, "signal_hash.txt")
+# BIST açılış saati (TR)
+MARKET_OPEN_HOUR = 10
+MARKET_OPEN_MIN  = 0
 
-# ✅ Weekend Snapshot + Son Sinyal
-SNAPSHOT_FILE = os.path.join(STATE_DIR, "weekend_snapshot.json")
-LAST_SIGNAL_TIME_FILE = os.path.join(STATE_DIR, "last_signal_time.txt")
+STATE_DIR = "state"
+STATE_HASH_FILE = os.path.join(STATE_DIR, "signal_hash.txt")
+STATE_LAST_SIGNAL_TIME_FILE = os.path.join(STATE_DIR, "last_signal_time.txt")
+STATE_WEEKEND_SNAPSHOT_FILE = os.path.join(STATE_DIR, "weekend_snapshot.json")
 
 
 # =======================
 # 3) ZAMAN / TELEGRAM
 # =======================
-def now_tr_time() -> datetime:
+def tr_now() -> datetime:
+    # TR = UTC+3 (sabit)
     return datetime.now(timezone.utc) + timedelta(hours=3)
 
-
 def now_tr_time_str() -> str:
-    return now_tr_time().strftime("%d.%m.%Y %H:%M")
+    return tr_now().strftime("%d.%m.%Y %H:%M")
 
+def is_weekend_tr(dt: datetime) -> bool:
+    return dt.weekday() >= 5  # 5=Sat, 6=Sun
 
-def is_weekend_tr() -> bool:
-    # 5=Cumartesi, 6=Pazar
-    return now_tr_time().weekday() >= 5
-
+def is_monday_after_open_tr(dt: datetime) -> bool:
+    if dt.weekday() != 0:  # 0=Mon
+        return False
+    return (dt.hour, dt.minute) >= (MARKET_OPEN_HOUR, MARKET_OPEN_MIN)
 
 def send_telegram_message(text: str) -> None:
     token = os.getenv("TELEGRAM_TOKEN")
@@ -689,61 +692,115 @@ def send_telegram_message(text: str) -> None:
         "disable_web_page_preview": True
     }
     try:
-        r = requests.post(url, json=payload, timeout=20)
+        r = requests.post(url, json=payload, timeout=25)
         if r.status_code != 200:
             print("Telegram hata:", r.status_code, r.text[:300])
+        else:
+            print("Telegram OK.")
     except Exception as e:
         print("Telegram exception:", e)
 
 
 # =======================
-# 4) STATE / HASH / SNAPSHOT
+# 4) STATE DOSYALARI
 # =======================
-def ensure_state_dir():
+def ensure_state_files():
     os.makedirs(STATE_DIR, exist_ok=True)
+    if not os.path.exists(STATE_HASH_FILE):
+        with open(STATE_HASH_FILE, "w", encoding="utf-8") as f:
+            f.write("")
+    if not os.path.exists(STATE_LAST_SIGNAL_TIME_FILE):
+        with open(STATE_LAST_SIGNAL_TIME_FILE, "w", encoding="utf-8") as f:
+            f.write("")
+    if not os.path.exists(STATE_WEEKEND_SNAPSHOT_FILE):
+        with open(STATE_WEEKEND_SNAPSHOT_FILE, "w", encoding="utf-8") as f:
+            f.write("{}")
 
+def read_text_file(path: str) -> str:
+    try:
+        if not os.path.exists(path):
+            return ""
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except Exception:
+        return ""
+
+def write_text_file(path: str, text: str) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
 
 def read_prev_hash() -> str:
-    if not os.path.exists(STATE_FILE):
-        return ""
-    try:
-        with open(STATE_FILE, "r", encoding="utf-8") as f:
-            return f.read().strip()
-    except Exception:
-        return ""
-
+    return read_text_file(STATE_HASH_FILE)
 
 def write_new_hash(new_hash: str) -> None:
-    ensure_state_dir()
-    with open(STATE_FILE, "w", encoding="utf-8") as f:
-        f.write(new_hash)
+    write_text_file(STATE_HASH_FILE, new_hash)
+
+def read_last_signal_time_str() -> str:
+    return read_text_file(STATE_LAST_SIGNAL_TIME_FILE)
+
+def write_last_signal_time_str(ts: str) -> None:
+    write_text_file(STATE_LAST_SIGNAL_TIME_FILE, ts)
 
 
-def read_last_signal_time() -> str:
-    if not os.path.exists(LAST_SIGNAL_TIME_FILE):
-        return ""
+# =======================
+# 5) SNAPSHOT (HAFTA SONU SABİT)
+# =======================
+def reset_weekend_snapshot_if_monday_open():
+    """
+    Pazartesi 10:00+ (TR): weekend_snapshot.json reset.
+    Böylece hafta içi canlı hesap başlar.
+    """
+    dt = tr_now()
+    if not is_monday_after_open_tr(dt):
+        return
+    if os.path.exists(STATE_WEEKEND_SNAPSHOT_FILE):
+        try:
+            with open(STATE_WEEKEND_SNAPSHOT_FILE, "w", encoding="utf-8") as f:
+                f.write("{}")
+            print("Pazartesi açılış sonrası: weekend snapshot resetlendi.")
+        except Exception as e:
+            print("Snapshot reset hatası:", e)
+
+def load_weekend_snapshot():
     try:
-        with open(LAST_SIGNAL_TIME_FILE, "r", encoding="utf-8") as f:
-            return f.read().strip()
+        if not os.path.exists(STATE_WEEKEND_SNAPSHOT_FILE):
+            return None
+        with open(STATE_WEEKEND_SNAPSHOT_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not data or "created_at" not in data:
+            return None
+        return data
     except Exception:
-        return ""
+        return None
+
+def save_weekend_snapshot(created_at: str, df_en: pd.DataFrame, df_vol_filtered: pd.DataFrame):
+    def df_to_rows(df: pd.DataFrame):
+        if df is None or df.empty:
+            return []
+        return df.to_dict(orient="records")
+
+    payload = {
+        "created_at": created_at,
+        "df_en": df_to_rows(df_en),
+        "df_vol_filtered": df_to_rows(df_vol_filtered),
+    }
+    os.makedirs(STATE_DIR, exist_ok=True)
+    with open(STATE_WEEKEND_SNAPSHOT_FILE, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
 
 
-def write_last_signal_time(ts_str: str) -> None:
-    ensure_state_dir()
-    with open(LAST_SIGNAL_TIME_FILE, "w", encoding="utf-8") as f:
-        f.write(ts_str)
-
-
+# =======================
+# 6) HASH (DEĞİŞİM KONTROL)
+# =======================
 def stable_hash_from_dfs(df_en: pd.DataFrame, df_vol_filtered: pd.DataFrame) -> str:
     """
-    Hash = EN_IYI + (ERKEN UYARI + HACİM EVET, EN_IYI hariç)
-    İkisinden herhangi biri değişirse -> hash değişir -> Telegram gider
+    Hash = EN_IYI + HACIM_EVET_FILTERED
+    İkisinden herhangi biri değişirse → hash değişir → Telegram gider
     """
     def df_to_str(df: pd.DataFrame, tag: str) -> str:
         if df is None or df.empty:
             return f"{tag}:EMPTY"
-
         cols = ["Hisse", "Son Kapanış", "MTF Skor", "DN Mesafe %", "Buy_1H", "Buy_4H", "DN Yakınlık Gün"]
         sub = df[cols].copy()
         lines = ["|".join(map(str, r)) for r in sub.itertuples(index=False)]
@@ -753,43 +810,8 @@ def stable_hash_from_dfs(df_en: pd.DataFrame, df_vol_filtered: pd.DataFrame) -> 
     return hashlib.sha256(s.encode("utf-8")).hexdigest()
 
 
-def save_snapshot(snapshot_time: str, df_en: pd.DataFrame, df_vol_filtered: pd.DataFrame) -> None:
-    ensure_state_dir()
-    payload = {
-        "snapshot_time": snapshot_time,
-        "en": [] if df_en is None or df_en.empty else df_en.to_dict(orient="records"),
-        "vol_filtered": [] if df_vol_filtered is None or df_vol_filtered.empty else df_vol_filtered.to_dict(orient="records"),
-    }
-    with open(SNAPSHOT_FILE, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False)
-
-
-def load_snapshot():
-    if not os.path.exists(SNAPSHOT_FILE):
-        return None, None, ""
-    try:
-        with open(SNAPSHOT_FILE, "r", encoding="utf-8") as f:
-            payload = json.load(f)
-
-        snap_ts = payload.get("snapshot_time", "")
-        df_en = pd.DataFrame(payload.get("en", []))
-        df_vol_filtered = pd.DataFrame(payload.get("vol_filtered", []))
-
-        # Kolon kontrolü (bozuk snapshot ise devre dışı bırak)
-        need_cols = ["Hisse", "Son Kapanış", "MTF Skor", "DN Mesafe %", "Buy_1H", "Buy_4H", "DN Yakınlık Gün"]
-        for df in (df_en, df_vol_filtered):
-            if df is not None and not df.empty:
-                for c in need_cols:
-                    if c not in df.columns:
-                        return None, None, ""
-
-        return df_en, df_vol_filtered, snap_ts
-    except Exception:
-        return None, None, ""
-
-
 # =======================
-# 5) VERİ ÇEKME
+# 7) VERİ ÇEKME
 # =======================
 def normalize_ohlc(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
@@ -809,7 +831,6 @@ def normalize_ohlc(df: pd.DataFrame) -> pd.DataFrame:
     df.dropna(subset=["Open", "High", "Low", "Close"], inplace=True)
     df.index = pd.to_datetime(df.index)
     return df
-
 
 def safe_history(symbol: str, period: str, interval: str, max_tries: int = 4) -> pd.DataFrame:
     """
@@ -831,7 +852,7 @@ def safe_history(symbol: str, period: str, interval: str, max_tries: int = 4) ->
 
 
 # =======================
-# 6) SUPER TREND (Pine v4 mantığı)
+# 8) SUPER TREND (Pine v4 mantığı)
 # =======================
 def supertrend_pine(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
@@ -884,13 +905,12 @@ def supertrend_pine(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # =======================
-# 7) ERKEN UYARI + HACİM + MTF
+# 9) ERKEN UYARI + HACİM + MTF
 # =======================
 def dn_distance_pct(row: pd.Series) -> float:
     if pd.isna(row.get("DN")) or pd.isna(row.get("Close")):
         return np.nan
     return (float(row["DN"]) - float(row["Close"])) / float(row["Close"])
-
 
 def dn_near_streak(out: pd.DataFrame) -> int:
     cnt = 0
@@ -904,8 +924,13 @@ def dn_near_streak(out: pd.DataFrame) -> int:
         cnt += 1
     return cnt
 
-
 def early_warning_daily(out: pd.DataFrame):
+    """
+    - Trend = -1 (downtrend)
+    - DN, fiyatın en fazla %2 üstünde (DN - Close)/Close <= 0.02
+    - Son 3 kapanış artıyor
+    - Bu DN yakınlığı en az 2 gün sürmüş
+    """
     if out is None or len(out) < 4:
         return False, np.nan, 0
 
@@ -927,7 +952,6 @@ def early_warning_daily(out: pd.DataFrame):
 
     return True, dist, streak
 
-
 def volume_increase_flag(df_daily: pd.DataFrame) -> bool:
     if df_daily is None or df_daily.empty or "Volume" not in df_daily.columns:
         return False
@@ -940,10 +964,9 @@ def volume_increase_flag(df_daily: pd.DataFrame) -> bool:
         return False
     return last5 > prev20
 
-
 def recent_buy_on_tf(symbol: str, interval: str, lookback_hours: int) -> bool:
     """
-    interval SADECE: 1h ve 4h (2h kesinlikle yok)
+    interval SADECE: 1h ve 4h
     """
     try:
         df = safe_history(symbol, period="10d", interval=interval)
@@ -965,7 +988,6 @@ def recent_buy_on_tf(symbol: str, interval: str, lookback_hours: int) -> bool:
     except Exception:
         return False
 
-
 def sort_df(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
         return pd.DataFrame()
@@ -975,7 +997,7 @@ def sort_df(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def build_lists():
+def compute_lists_live():
     rows_en = []
     rows_vol_yes = []
 
@@ -1014,7 +1036,6 @@ def build_lists():
 
             if vol_yes:
                 rows_vol_yes.append(row)
-
             if score >= TOP_SCORE_MIN:
                 rows_en.append(row)
 
@@ -1026,22 +1047,58 @@ def build_lists():
 
     df_en = sort_df(pd.DataFrame(rows_en)).head(TOP_N)
     df_vol = sort_df(pd.DataFrame(rows_vol_yes)).head(VOLUME_TOP_N)
-    return df_en, df_vol
+
+    # HACİM listesinden EN_IYI tekrarlarını çıkar
+    en_set = set(df_en["Hisse"].tolist()) if not df_en.empty else set()
+    df_vol_filtered = df_vol[~df_vol["Hisse"].isin(en_set)].copy() if not df_vol.empty else pd.DataFrame()
+
+    return df_en, df_vol_filtered
 
 
-def build_telegram_message(df_en: pd.DataFrame,
-                          df_vol_filtered: pd.DataFrame,
-                          last_signal_time: str = "",
-                          weekend_snapshot_time: str = "") -> str:
+def build_lists_with_weekend_snapshot():
+    """
+    - Cumartesi/Pazar: snapshot varsa onu kullan.
+    - Snapshot yoksa (ilk kez): canlı hesapla, snapshot kaydet, sonra onu kullan.
+    - Hafta içi: canlı hesap.
+    """
+    dt = tr_now()
+
+    # Pazartesi açılış sonrası snapshot reset
+    reset_weekend_snapshot_if_monday_open()
+
+    if is_weekend_tr(dt):
+        snap = load_weekend_snapshot()
+        if snap:
+            df_en = pd.DataFrame(snap.get("df_en", []))
+            df_vol_filtered = pd.DataFrame(snap.get("df_vol_filtered", []))
+            created_at = snap.get("created_at", "")
+            return df_en, df_vol_filtered, created_at, True
+
+        # Snapshot yok -> canlı hesapla ve snapshot kaydet
+        df_en, df_vol_filtered = compute_lists_live()
+        created_at = now_tr_time_str()
+        save_weekend_snapshot(created_at, df_en, df_vol_filtered)
+        return df_en, df_vol_filtered, created_at, True
+
+    # Hafta içi -> canlı
+    df_en, df_vol_filtered = compute_lists_live()
+    return df_en, df_vol_filtered, "", False
+
+
+# =======================
+# 10) TELEGRAM MESAJI
+# =======================
+def build_telegram_message(df_en: pd.DataFrame, df_vol_filtered: pd.DataFrame,
+                          weekend_snapshot_time: str, is_weekend_mode: bool) -> str:
     ts = now_tr_time_str()
+    last_signal = read_last_signal_time_str()
+    if not last_signal:
+        last_signal = "-"
+
     msg = f"🕒 <i>{ts}</i>\n"
-
-    if last_signal_time:
-        msg += f"🧷 <b>Son Sinyal:</b> <i>{last_signal_time}</i>\n"
-
-    if weekend_snapshot_time:
-        msg += f"📌 <b>Weekend Snapshot:</b> <i>{weekend_snapshot_time}</i>\n"
-
+    msg += f"🧷 <b>Son Sinyal:</b> <i>{last_signal}</i>\n"
+    if is_weekend_mode:
+        msg += f"📌 <b>Weekend Snapshot:</b> <i>{weekend_snapshot_time or '-'} </i>\n"
     msg += "\n"
 
     msg += f"📈 <b>EN_IYI (Skor ≥ {TOP_SCORE_MIN})</b>\n"
@@ -1050,7 +1107,8 @@ def build_telegram_message(df_en: pd.DataFrame,
     else:
         for _, r in df_en.iterrows():
             msg += (
-                f"• <b>{r['Hisse']}</b> | Kapanış {r['Son Kapanış']} | Skor {r['MTF Skor']} | DN% {r['DN Mesafe %']} | "
+                f"• <b>{r['Hisse']}</b> | Kapanış {r['Son Kapanış']} | "
+                f"Skor {r['MTF Skor']} | DN% {r['DN Mesafe %']} | "
                 f"1H:{r['Buy_1H']} | 4H:{r['Buy_4H']} | Streak:{r['DN Yakınlık Gün']}\n"
             )
         msg += f"\nToplam: <b>{len(df_en)}</b>\n\n"
@@ -1061,7 +1119,8 @@ def build_telegram_message(df_en: pd.DataFrame,
     else:
         for _, r in df_vol_filtered.iterrows():
             msg += (
-                f"• <b>{r['Hisse']}</b> | Kapanış {r['Son Kapanış']} | Skor {r['MTF Skor']} | DN% {r['DN Mesafe %']} | "
+                f"• <b>{r['Hisse']}</b> | Kapanış {r['Son Kapanış']} | "
+                f"Skor {r['MTF Skor']} | DN% {r['DN Mesafe %']} | "
                 f"1H:{r['Buy_1H']} | 4H:{r['Buy_4H']} | Streak:{r['DN Yakınlık Gün']}\n"
             )
         msg += f"\nToplam: <b>{len(df_vol_filtered)}</b>\n"
@@ -1069,29 +1128,13 @@ def build_telegram_message(df_en: pd.DataFrame,
     return msg
 
 
+# =======================
+# 11) MAIN
+# =======================
 def main():
-    # ✅ Hafta sonu: snapshot’tan oku, aynısını koru
-    weekend_ts = ""
-    last_signal_time = read_last_signal_time()
+    ensure_state_files()
 
-    if is_weekend_tr():
-        df_en, df_vol_filtered, weekend_ts = load_snapshot()
-
-        # Snapshot yoksa ilk kurulum için normal hesapla (ama hafta sonu da olsa)
-        if df_en is None:
-            df_en, df_vol = build_lists()
-            en_set = set(df_en["Hisse"].tolist()) if (df_en is not None and not df_en.empty) else set()
-            df_vol_filtered = df_vol[~df_vol["Hisse"].isin(en_set)].copy() if (df_vol is not None and not df_vol.empty) else pd.DataFrame()
-
-            # Snapshot’ı yine de kaydet (sonraki weekend run aynı listeyi korusun)
-            save_snapshot(now_tr_time_str(), df_en, df_vol_filtered)
-    else:
-        # ✅ Hafta içi: her çalışmada hesapla + snapshot güncelle
-        df_en, df_vol = build_lists()
-        en_set = set(df_en["Hisse"].tolist()) if (df_en is not None and not df_en.empty) else set()
-        df_vol_filtered = df_vol[~df_vol["Hisse"].isin(en_set)].copy() if (df_vol is not None and not df_vol.empty) else pd.DataFrame()
-
-        save_snapshot(now_tr_time_str(), df_en, df_vol_filtered)
+    df_en, df_vol_filtered, snap_time, weekend_mode = build_lists_with_weekend_snapshot()
 
     prev_hash = read_prev_hash()
     new_hash = stable_hash_from_dfs(df_en, df_vol_filtered)
@@ -1099,17 +1142,13 @@ def main():
     print("Prev hash:", prev_hash)
     print("New  hash:", new_hash)
 
+    # İkisinden biri değişirse gönder
     if new_hash != prev_hash:
-        msg = build_telegram_message(
-            df_en,
-            df_vol_filtered,
-            last_signal_time=last_signal_time,
-            weekend_snapshot_time=weekend_ts
-        )
+        msg = build_telegram_message(df_en, df_vol_filtered, snap_time, weekend_mode)
         send_telegram_message(msg)
 
         write_new_hash(new_hash)
-        write_last_signal_time(now_tr_time_str())
+        write_last_signal_time_str(now_tr_time_str())
 
         print("Değişim var → Telegram gönderildi, state güncellendi.")
     else:
