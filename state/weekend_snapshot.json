@@ -1,1 +1,42 @@
-﻿{}
+{
+  "created_at": "25.01.2026 16:16",
+  "df_en": [],
+  "df_vol_filtered": [
+    {
+      "Hisse": "DYOBY",
+      "Son Kapanış": 13.65,
+      "MTF Skor": 2,
+      "DN Mesafe %": 0.67,
+      "Buy_1H": "Hayır",
+      "Buy_4H": "Hayır",
+      "DN Yakınlık Gün": 2
+    },
+    {
+      "Hisse": "PENTA",
+      "Son Kapanış": 14.27,
+      "MTF Skor": 2,
+      "DN Mesafe %": 0.84,
+      "Buy_1H": "Hayır",
+      "Buy_4H": "Hayır",
+      "DN Yakınlık Gün": 2
+    },
+    {
+      "Hisse": "SEKFK",
+      "Son Kapanış": 8.4,
+      "MTF Skor": 2,
+      "DN Mesafe %": 0.87,
+      "Buy_1H": "Hayır",
+      "Buy_4H": "Hayır",
+      "DN Yakınlık Gün": 2
+    },
+    {
+      "Hisse": "BAGFS",
+      "Son Kapanış": 27.36,
+      "MTF Skor": 2,
+      "DN Mesafe %": 0.92,
+      "Buy_1H": "Hayır",
+      "Buy_4H": "Hayır",
+      "DN Yakınlık Gün": 2
+    }
+  ]
+}
