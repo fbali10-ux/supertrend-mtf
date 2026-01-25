@@ -1,5 +1,9 @@
+import os
 import time
-import random
+import hashlib
+from datetime import datetime, timezone, timedelta
+
+import requests
 import pandas as pd
 import numpy as np
 import yfinance as yf
@@ -7,9 +11,9 @@ from curl_cffi import requests as cffi_requests
 
 
 # =======================
-# AYARLAR
+# 1) SİMGE LİSTESİ (SENİN LİSTE)
 # =======================
-BIST30 = [
+SYMBOLS = [
 "A1YEN.IS",
 "ACSEL.IS",
 "ADEL.IS",
@@ -619,9 +623,16 @@ BIST30 = [
 "ZELOT.IS",
 "ZERGY.IS",
 "ZGOLD.IS",
-"ZOREN.IS",
-]
+"ZOREN.IS",]
 
+# Eğer listeyi dosyada aynen tuttun diye varsayıyorum:
+# Tekrarları temizle
+SYMBOLS = list(dict.fromkeys([s.strip().strip('"').strip(",") for s in SYMBOLS if s and str(s).strip()]))
+
+
+# =======================
+# 2) PARAMETRELER
+# =======================
 ATR_PERIOD = 10
 MULTIPLIER = 3.0
 
@@ -633,27 +644,86 @@ LOOKBACK_4H = 96            # saat
 
 TOP_SCORE_MIN = 3
 TOP_N = 10
+VOLUME_TOP_N = 10
+
+FAST_MODE = True            # True: daha hızlı (sleep yok)
+
+STATE_DIR = "state"
+STATE_FILE = os.path.join(STATE_DIR, "signal_hash.txt")
 
 
 # =======================
-# YARDIMCI
+# 3) ZAMAN / TELEGRAM
 # =======================
-def tradingview_link(symbol: str) -> str:
+def now_tr_time_str() -> str:
+    tr_time = datetime.now(timezone.utc) + timedelta(hours=3)
+    return tr_time.strftime("%d.%m.%Y %H:%M")
+
+
+def send_telegram_message(text: str) -> None:
+    token = os.getenv("TELEGRAM_TOKEN")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+    if not token or not chat_id:
+        print("Telegram ENV yok (TELEGRAM_TOKEN / TELEGRAM_CHAT_ID). Mesaj atlanıyor.")
+        return
+
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    payload = {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True
+    }
+    try:
+        r = requests.post(url, json=payload, timeout=20)
+        if r.status_code != 200:
+            print("Telegram hata:", r.status_code, r.text[:300])
+    except Exception as e:
+        print("Telegram exception:", e)
+
+
+# =======================
+# 4) STATE HASH
+# =======================
+def read_prev_hash() -> str:
+    if not os.path.exists(STATE_FILE):
+        return ""
+    try:
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except Exception:
+        return ""
+
+
+def write_new_hash(new_hash: str) -> None:
+    os.makedirs(STATE_DIR, exist_ok=True)
+    with open(STATE_FILE, "w", encoding="utf-8") as f:
+        f.write(new_hash)
+
+
+def stable_hash_from_dfs(df_en: pd.DataFrame, df_vol_filtered: pd.DataFrame) -> str:
     """
-    EN_IYI sheet için tıklanabilir TradingView linki
-    (BIST günlük grafik)
+    Hash = EN_IYI + (ERKEN UYARI + HACİM EVET, EN_IYI hariç)
+    İkisinden herhangi biri değişirse -> hash değişir -> Telegram gider
     """
-    sym = symbol.replace(".IS", "")
-    return f"https://www.tradingview.com/chart/?symbol=BIST:{sym}"
+    def df_to_str(df: pd.DataFrame, tag: str) -> str:
+        if df is None or df.empty:
+            return f"{tag}:EMPTY"
+        cols = ["Hisse","MTF Skor","DN Mesafe %","Buy_1H","Buy_4H","DN Yakınlık Gün"]
+        sub = df[cols].copy()
+        lines = ["|".join(map(str, r)) for r in sub.itertuples(index=False)]
+        return f"{tag}:" + "||".join(lines)
+
+    s = df_to_str(df_en, "EN_IYI") + "\n" + df_to_str(df_vol_filtered, "HACIM_EVET_FILTERED")
+    return hashlib.sha256(s.encode("utf-8")).hexdigest()
 
 
 # =======================
-# VERİ ÇEKME
+# 5) VERİ ÇEKME
 # =======================
 def normalize_ohlc(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
         return pd.DataFrame()
-
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = [c[0] for c in df.columns]
 
@@ -661,8 +731,8 @@ def normalize_ohlc(df: pd.DataFrame) -> pd.DataFrame:
     if "Volume" in df.columns:
         cols.append("Volume")
 
-    missing = [c for c in ["Open","High","Low","Close"] if c not in df.columns]
-    if missing:
+    need = {"Open","High","Low","Close"}
+    if not need.issubset(set(df.columns)):
         return pd.DataFrame()
 
     df = df[cols].copy()
@@ -671,7 +741,10 @@ def normalize_ohlc(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def safe_history(symbol: str, period: str, interval: str, max_tries: int = 5) -> pd.DataFrame:
+def safe_history(symbol: str, period: str, interval: str, max_tries: int = 4) -> pd.DataFrame:
+    """
+    interval SADECE: '1d', '1h', '4h'  (2h YOK!)
+    """
     last_err = None
     for i in range(max_tries):
         try:
@@ -683,12 +756,12 @@ def safe_history(symbol: str, period: str, interval: str, max_tries: int = 5) ->
                 return df
         except Exception as e:
             last_err = e
-        time.sleep(1.2 + i + random.uniform(0.0, 0.4))
+        time.sleep(0.6 + i * 0.4)
     raise RuntimeError(f"{symbol} veri alınamadı: {last_err}")
 
 
 # =======================
-# SUPER TREND (Pine uyumlu)
+# 6) SUPER TREND (Pine v4 mantığı)
 # =======================
 def supertrend_pine(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
@@ -701,11 +774,9 @@ def supertrend_pine(df: pd.DataFrame) -> pd.DataFrame:
     pc = np.roll(c, 1)
     pc[0] = c[0]
 
-    tr = np.maximum.reduce([h-l, np.abs(h-pc), np.abs(l-pc)])
+    tr = np.maximum.reduce([h - l, np.abs(h - pc), np.abs(l - pc)])
     atr = pd.Series(tr, index=df.index).ewm(
-        alpha=1/ATR_PERIOD,
-        adjust=False,
-        min_periods=ATR_PERIOD
+        alpha=1 / ATR_PERIOD, adjust=False, min_periods=ATR_PERIOD
     ).mean().values
 
     n = len(df)
@@ -724,58 +795,48 @@ def supertrend_pine(df: pd.DataFrame) -> pd.DataFrame:
             up[i], dn[i] = up_raw, dn_raw
             continue
 
-        up_prev, dn_prev = up[i-1], dn[i-1]
+        up_prev, dn_prev = up[i - 1], dn[i - 1]
 
-        up[i] = max(up_raw, up_prev) if c[i-1] > up_prev else up_raw
-        dn[i] = min(dn_raw, dn_prev) if c[i-1] < dn_prev else dn_raw
+        up[i] = max(up_raw, up_prev) if c[i - 1] > up_prev else up_raw
+        dn[i] = min(dn_raw, dn_prev) if c[i - 1] < dn_prev else dn_raw
 
-        if trend[i-1] == -1 and c[i] > dn_prev:
+        if trend[i - 1] == -1 and c[i] > dn_prev:
             trend[i] = 1
-        elif trend[i-1] == 1 and c[i] < up_prev:
+        elif trend[i - 1] == 1 and c[i] < up_prev:
             trend[i] = -1
         else:
-            trend[i] = trend[i-1]
+            trend[i] = trend[i - 1]
 
     df["Trend"] = trend
-    df["UP"] = up
     df["DN"] = dn
     df["BUY"] = (df["Trend"] == 1) & (df["Trend"].shift(1) == -1)
     return df
 
 
 # =======================
-# ERKEN UYARI HESAPLARI
+# 7) ERKEN UYARI + HACİM + MTF
 # =======================
 def dn_distance_pct(row: pd.Series) -> float:
     if pd.isna(row.get("DN")) or pd.isna(row.get("Close")):
         return np.nan
-    return (row["DN"] - row["Close"]) / row["Close"]
+    return (float(row["DN"]) - float(row["Close"])) / float(row["Close"])
 
 
 def dn_near_streak(out: pd.DataFrame) -> int:
     cnt = 0
-    for i in range(len(out)-1, -1, -1):
+    for i in range(len(out) - 1, -1, -1):
         r = out.iloc[i]
         if int(r["Trend"]) != -1:
             break
-        dist = dn_distance_pct(r)
-        if np.isnan(dist) or dist < 0 or dist > DN_DIST_LIMIT:
+        d = dn_distance_pct(r)
+        if np.isnan(d) or d < 0 or d > DN_DIST_LIMIT:
             break
         cnt += 1
     return cnt
 
 
-def volume_increase_flag(out: pd.DataFrame) -> bool:
-    if "Volume" not in out.columns:
-        return False
-    vol = out["Volume"].dropna()
-    if len(vol) < 26:
-        return False
-    return vol.iloc[-5:].mean() > vol.iloc[-25:-5].mean()
-
-
 def early_warning_daily(out: pd.DataFrame):
-    if len(out) < 4:
+    if out is None or len(out) < 4:
         return False, np.nan, 0
 
     last = out.iloc[-1]
@@ -783,7 +844,7 @@ def early_warning_daily(out: pd.DataFrame):
         return False, np.nan, 0
 
     dist = dn_distance_pct(last)
-    if np.isnan(dist) or dist < 0 or dist > DN_DIST_LIMIT:
+    if np.isnan(dist) or not (0 <= dist <= DN_DIST_LIMIT):
         return False, dist, 0
 
     c0, c1, c2 = out["Close"].iloc[-1], out["Close"].iloc[-2], out["Close"].iloc[-3]
@@ -797,12 +858,28 @@ def early_warning_daily(out: pd.DataFrame):
     return True, dist, streak
 
 
-# =======================
-# MTF BUY TEYİDİ
-# =======================
+def volume_increase_flag(df_daily: pd.DataFrame) -> bool:
+    if df_daily is None or df_daily.empty or "Volume" not in df_daily.columns:
+        return False
+    vol = df_daily["Volume"].dropna()
+    if len(vol) < 26:
+        return False
+    last5 = vol.iloc[-5:].mean()
+    prev20 = vol.iloc[-25:-5].mean()
+    if np.isnan(prev20) or prev20 <= 0:
+        return False
+    return last5 > prev20
+
+
 def recent_buy_on_tf(symbol: str, interval: str, lookback_hours: int) -> bool:
+    """
+    interval SADECE: 1h ve 4h (2h kesinlikle yok)
+    """
     try:
         df = safe_history(symbol, period="10d", interval=interval)
+        if df.empty or len(df) < ATR_PERIOD + 5:
+            return False
+
         out = supertrend_pine(df)
         buys = out[out["BUY"]]
         if buys.empty:
@@ -813,91 +890,125 @@ def recent_buy_on_tf(symbol: str, interval: str, lookback_hours: int) -> bool:
         if last_buy.tzinfo is None:
             last_buy = last_buy.tz_localize("UTC")
 
-        hours_ago = (now_utc - last_buy).total_seconds() / 3600
+        hours_ago = (now_utc - last_buy).total_seconds() / 3600.0
         return hours_ago <= lookback_hours
     except Exception:
         return False
 
 
-# =======================
-# MAIN
-# =======================
-def main():
-    erken_evet, erken_hayir, son_buy, hatalar = [], [], [], []
+def sort_df(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+    df = df.copy()
+    df.sort_values(by=["MTF Skor","DN Mesafe %"], ascending=[False, True], inplace=True)
+    df.reset_index(drop=True, inplace=True)
+    return df
 
-    for symbol in BIST30:
-        print(f"Taraniyor: {symbol}")
+
+def build_lists():
+    rows_en = []
+    rows_vol_yes = []
+
+    for symbol in SYMBOLS:
         try:
-            df_d = safe_history(symbol, "8y", "1d")
+            # 1) önce günlükten ele
+            df_d = safe_history(symbol, period="8y", interval="1d")
+            if df_d.empty or len(df_d) < (ATR_PERIOD + 10):
+                continue
+
             out_d = supertrend_pine(df_d)
-
-            # SON BUY
-            buys = out_d[out_d["BUY"]]
-            if not buys.empty:
-                lb = buys.iloc[-1]
-                son_buy.append({
-                    "Hisse": symbol.replace(".IS",""),
-                    "Son Buy Tarihi": lb.name.date(),
-                    "Son Buy Fiyatı": round(lb["Close"],2)
-                })
-
             ok, dist, streak = early_warning_daily(out_d)
             if not ok:
                 continue
 
-            vol_flag = volume_increase_flag(out_d)
+            # 2) hacim
+            vol_yes = volume_increase_flag(df_d)
 
+            # 3) 1h/4h teyit (sadece geçenlere)
             score = 2
             buy_1h = recent_buy_on_tf(symbol, "1h", LOOKBACK_1H)
             buy_4h = recent_buy_on_tf(symbol, "4h", LOOKBACK_4H)
-
-            if buy_1h: score += 1
-            if buy_4h: score += 1
+            if buy_1h:
+                score += 1
+            if buy_4h:
+                score += 1
 
             row = {
                 "Hisse": symbol.replace(".IS",""),
-                "Kapanış": round(out_d.iloc[-1]["Close"],2),
-                "DN Bandı": round(out_d.iloc[-1]["DN"],2),
-                "DN Mesafe %": round(dist*100,2),
-                "DN Yakınlık Gün": streak,
-                "1H Buy": "Evet" if buy_1h else "Hayır",
-                "4H Buy": "Evet" if buy_4h else "Hayır",
-                "MTF Skor": score,
-                "Hacim Artışı": "Evet" if vol_flag else "Hayır"
+                "MTF Skor": int(score),
+                "DN Mesafe %": round(float(dist) * 100, 2),
+                "Buy_1H": "Evet" if buy_1h else "Hayır",
+                "Buy_4H": "Evet" if buy_4h else "Hayır",
+                "DN Yakınlık Gün": int(streak),
             }
 
-            (erken_evet if vol_flag else erken_hayir).append(row)
+            if vol_yes:
+                rows_vol_yes.append(row)
 
-        except Exception as e:
-            hatalar.append((symbol, str(e)))
+            if score >= TOP_SCORE_MIN:
+                rows_en.append(row)
 
-    df_evet = pd.DataFrame(erken_evet)
-    df_hayir = pd.DataFrame(erken_hayir)
-    df_son = pd.DataFrame(son_buy).sort_values("Son Buy Tarihi", ascending=False)
-    df_hat = pd.DataFrame(hatalar, columns=["Hisse","Hata"])
+            if not FAST_MODE:
+                time.sleep(0.15)
 
-    if not df_evet.empty:
-        df_evet.sort_values(["MTF Skor","DN Mesafe %"], ascending=[False,True], inplace=True)
-    if not df_hayir.empty:
-        df_hayir.sort_values(["MTF Skor","DN Mesafe %"], ascending=[False,True], inplace=True)
+        except Exception:
+            continue
 
-    df_all = pd.concat([df_evet, df_hayir], ignore_index=True)
-    df_en_iyi = df_all[df_all["MTF Skor"] >= TOP_SCORE_MIN] \
-        .sort_values(["MTF Skor","DN Mesafe %"], ascending=[False,True]) \
-        .head(TOP_N)
+    df_en = sort_df(pd.DataFrame(rows_en)).head(TOP_N)
+    df_vol = sort_df(pd.DataFrame(rows_vol_yes)).head(VOLUME_TOP_N)
+    return df_en, df_vol
 
-    # TradingView linki EKLE
-    if not df_en_iyi.empty:
-        df_en_iyi["TradingView"] = df_en_iyi["Hisse"].apply(tradingview_link)
 
-    with pd.ExcelWriter("bist30_supertrend_mtf_erken_uyari.xlsx", engine="openpyxl") as writer:
-        df_en_iyi.to_excel(writer, index=False, sheet_name="EN_IYI")
-        df_evet.to_excel(writer, index=False, sheet_name="ERKEN_UYARI_HACIM_EVET")
-        df_hayir.to_excel(writer, index=False, sheet_name="ERKEN_UYARI_HACIM_HAYIR")
-        df_son.to_excel(writer, index=False, sheet_name="SON_BUY")
-        df_hat.to_excel(writer, index=False, sheet_name="HATALAR")
+def build_telegram_message(df_en: pd.DataFrame, df_vol_filtered: pd.DataFrame) -> str:
+    ts = now_tr_time_str()
+    msg = f"🕒 <i>{ts}</i>\n\n"
 
-    print("\n✅ bist30_supertrend_mtf_erken_uyari.xlsx oluşturuldu")
+    msg += f"📈 <b>EN_IYI (Skor ≥ {TOP_SCORE_MIN})</b>\n"
+    if df_en.empty:
+        msg += "⏳ Yok\n\n"
+    else:
+        for _, r in df_en.iterrows():
+            msg += (
+                f"• <b>{r['Hisse']}</b> | Skor {r['MTF Skor']} | DN% {r['DN Mesafe %']} | "
+                f"1H:{r['Buy_1H']} | 4H:{r['Buy_4H']} | Streak:{r['DN Yakınlık Gün']}\n"
+            )
+        msg += f"\nToplam: <b>{len(df_en)}</b>\n\n"
+
+    msg += "🔥 <b>ERKEN UYARI + HACİM EVET (EN_IYI hariç)</b>\n"
+    if df_vol_filtered.empty:
+        msg += "⏳ Yok\n"
+    else:
+        for _, r in df_vol_filtered.iterrows():
+            msg += (
+                f"• <b>{r['Hisse']}</b> | Skor {r['MTF Skor']} | DN% {r['DN Mesafe %']} | "
+                f"1H:{r['Buy_1H']} | 4H:{r['Buy_4H']} | Streak:{r['DN Yakınlık Gün']}\n"
+            )
+        msg += f"\nToplam: <b>{len(df_vol_filtered)}</b>\n"
+
+    return msg
+
+
+def main():
+    df_en, df_vol = build_lists()
+
+    # HACİM listesinden EN_IYI tekrarlarını çıkar
+    en_set = set(df_en["Hisse"].tolist()) if (df_en is not None and not df_en.empty) else set()
+    df_vol_filtered = df_vol[~df_vol["Hisse"].isin(en_set)].copy() if (df_vol is not None and not df_vol.empty) else pd.DataFrame()
+
+    prev_hash = read_prev_hash()
+    new_hash = stable_hash_from_dfs(df_en, df_vol_filtered)
+
+    print("Prev hash:", prev_hash)
+    print("New  hash:", new_hash)
+
+    # İkisinden biri değişirse gönder
+    if new_hash != prev_hash:
+        msg = build_telegram_message(df_en, df_vol_filtered)
+        send_telegram_message(msg)
+        write_new_hash(new_hash)
+        print("Değişim var → Telegram gönderildi, state güncellendi.")
+    else:
+        print("Değişim yok → Telegram gönderilmedi.")
 
 
 if __name__ == "__main__":
