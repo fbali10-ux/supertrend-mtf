@@ -2,3 +2,6 @@ state/*
 !state/signal_hash.txt
 !state/last_signal_time.txt
 !state/weekend_snapshot.json
+state/*.txt
+state/*.json
+
