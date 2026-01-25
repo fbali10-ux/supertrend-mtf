@@ -29,10 +29,10 @@ jobs:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          python supertrend_erken_buy_yakalama.py
+          python 
 
       - name: Commit state if changed
-        run: |
+        run: |python al_verenler.py
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add state/signal_hash.txt
