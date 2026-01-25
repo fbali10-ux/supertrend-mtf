@@ -1,6 +1,4 @@
-# Runtime state
-#state/
-#state/*.txt
-# state klasörü dursun, hash dosyasını izleyelim
 state/*
 !state/signal_hash.txt
+!state/last_signal_time.txt
+!state/weekend_snapshot.json
