@@ -1,3 +1,6 @@
 # Runtime state
-state/
-state/*.txt
+#state/
+#state/*.txt
+# state klasörü dursun, hash dosyasını izleyelim
+state/*
+!state/signal_hash.txt
