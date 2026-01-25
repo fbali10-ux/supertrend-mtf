@@ -245,7 +245,6 @@ SYMBOLS = [
 "GARAN.IS",
 "GARFA.IS",
 "GEDIK.IS",
-"GEDZA.IS",
 "GENIL.IS",
 "GENTS.IS",
 "GEREL.IS",
@@ -626,7 +625,6 @@ SYMBOLS = [
 "ZOREN.IS",
 ]
 
-# Eğer listeyi dosyada aynen tuttun diye varsayıyorum:
 # Tekrarları temizle
 SYMBOLS = list(dict.fromkeys([s.strip().strip('"').strip(",") for s in SYMBOLS if s and str(s).strip()]))
 
@@ -710,7 +708,7 @@ def stable_hash_from_dfs(df_en: pd.DataFrame, df_vol_filtered: pd.DataFrame) -> 
     def df_to_str(df: pd.DataFrame, tag: str) -> str:
         if df is None or df.empty:
             return f"{tag}:EMPTY"
-        cols = ["Hisse","MTF Skor","DN Mesafe %","Buy_1H","Buy_4H","DN Yakınlık Gün"]
+        cols = ["Hisse", "Son Kapanış", "MTF Skor", "DN Mesafe %", "Buy_1H", "Buy_4H", "DN Yakınlık Gün"]
         sub = df[cols].copy()
         lines = ["|".join(map(str, r)) for r in sub.itertuples(index=False)]
         return f"{tag}:" + "||".join(lines)
@@ -728,16 +726,16 @@ def normalize_ohlc(df: pd.DataFrame) -> pd.DataFrame:
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = [c[0] for c in df.columns]
 
-    cols = ["Open","High","Low","Close"]
+    cols = ["Open", "High", "Low", "Close"]
     if "Volume" in df.columns:
         cols.append("Volume")
 
-    need = {"Open","High","Low","Close"}
+    need = {"Open", "High", "Low", "Close"}
     if not need.issubset(set(df.columns)):
         return pd.DataFrame()
 
     df = df[cols].copy()
-    df.dropna(subset=["Open","High","Low","Close"], inplace=True)
+    df.dropna(subset=["Open", "High", "Low", "Close"], inplace=True)
     df.index = pd.to_datetime(df.index)
     return df
 
@@ -901,7 +899,7 @@ def sort_df(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
         return pd.DataFrame()
     df = df.copy()
-    df.sort_values(by=["MTF Skor","DN Mesafe %"], ascending=[False, True], inplace=True)
+    df.sort_values(by=["MTF Skor", "DN Mesafe %"], ascending=[False, True], inplace=True)
     df.reset_index(drop=True, inplace=True)
     return df
 
@@ -922,6 +920,9 @@ def build_lists():
             if not ok:
                 continue
 
+            # Son kapanış
+            last_close = float(df_d["Close"].iloc[-1])
+
             # 2) hacim
             vol_yes = volume_increase_flag(df_d)
 
@@ -935,7 +936,8 @@ def build_lists():
                 score += 1
 
             row = {
-                "Hisse": symbol.replace(".IS",""),
+                "Hisse": symbol.replace(".IS", ""),
+                "Son Kapanış": round(last_close, 2),
                 "MTF Skor": int(score),
                 "DN Mesafe %": round(float(dist) * 100, 2),
                 "Buy_1H": "Evet" if buy_1h else "Hayır",
@@ -970,7 +972,7 @@ def build_telegram_message(df_en: pd.DataFrame, df_vol_filtered: pd.DataFrame) -
     else:
         for _, r in df_en.iterrows():
             msg += (
-                f"• <b>{r['Hisse']}</b> | Skor {r['MTF Skor']} | DN% {r['DN Mesafe %']} | "
+                f"• <b>{r['Hisse']}</b> | Kapanış {r['Son Kapanış']} | Skor {r['MTF Skor']} | DN% {r['DN Mesafe %']} | "
                 f"1H:{r['Buy_1H']} | 4H:{r['Buy_4H']} | Streak:{r['DN Yakınlık Gün']}\n"
             )
         msg += f"\nToplam: <b>{len(df_en)}</b>\n\n"
@@ -981,7 +983,7 @@ def build_telegram_message(df_en: pd.DataFrame, df_vol_filtered: pd.DataFrame) -
     else:
         for _, r in df_vol_filtered.iterrows():
             msg += (
-                f"• <b>{r['Hisse']}</b> | Skor {r['MTF Skor']} | DN% {r['DN Mesafe %']} | "
+                f"• <b>{r['Hisse']}</b> | Kapanış {r['Son Kapanış']} | Skor {r['MTF Skor']} | DN% {r['DN Mesafe %']} | "
                 f"1H:{r['Buy_1H']} | 4H:{r['Buy_4H']} | Streak:{r['DN Yakınlık Gün']}\n"
             )
         msg += f"\nToplam: <b>{len(df_vol_filtered)}</b>\n"
