@@ -1,7 +1,5 @@
-state/*
-!state/signal_hash.txt
-!state/last_signal_time.txt
-!state/weekend_snapshot.json
-state/*.txt
-state/*.json
+cd C:\borsa\supertrend\supertrend-mtf
 
+git add state/
+git commit -m "Track state files for hourly change detection"
+git push origin main
