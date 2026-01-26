@@ -3,18 +3,23 @@ name: Supertrend EN_IYI + HACIM Hourly
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 * * * *"   # HER SAAT (UTC). TR saatine göre +3
+    - cron: "0 * * * *"   # her saat (UTC). TR = UTC+3
 
 permissions:
   contents: write
 
+concurrency:
+  group: supertrend-hourly
+  cancel-in-progress: false
+
 jobs:
   run:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -26,6 +31,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Ensure state folder exists
+        run: |
+          mkdir -p state
+          test -f state/signal_hash.txt || echo -n "" > state/signal_hash.txt
+          test -f state/last_signal_time.txt || echo -n "" > state/last_signal_time.txt
+          test -f state/weekend_snapshot.json || echo "{}" > state/weekend_snapshot.json
+
       - name: Run Supertrend script
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
@@ -33,7 +45,6 @@ jobs:
         run: |
           python al_verenler.py
 
-      # 🔴 EN KRİTİK KISIM – STATE KALICI OLSUN DİYE
       - name: Commit state if changed
         run: |
           git config user.name "github-actions[bot]"
