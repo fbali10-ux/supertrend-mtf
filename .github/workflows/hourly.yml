@@ -3,7 +3,7 @@ name: Supertrend EN_IYI + HACIM Hourly
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 * * * *"   # her saat başı
+    - cron: "0 * * * *"   # HER SAAT (UTC). TR saatine göre +3
 
 permissions:
   contents: write
@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout repo
         uses: actions/checkout@v4
 
       - name: Setup Python
@@ -21,24 +21,28 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install deps
+      - name: Install dependencies
         run: |
+          python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run script
+      - name: Run Supertrend script
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           python al_verenler.py
 
+      # 🔴 EN KRİTİK KISIM – STATE KALICI OLSUN DİYE
       - name: Commit state if changed
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add state/signal_hash.txt state/last_signal_time.txt state/weekend_snapshot.json || true
+
+          git add state/ || true
+
           if git diff --cached --quiet; then
-            echo "No state change"
+            echo "State değişmedi → commit yok"
           else
             git commit -m "Update signal state"
             git push
