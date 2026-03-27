@@ -1,1 +1,15 @@
-{}
+{
+  "created_at": "28.03.2026 00:30",
+  "df_en": [],
+  "df_vol_filtered": [
+    {
+      "Hisse": "ALCTL",
+      "Son Kapanış": 135.1,
+      "MTF Skor": 2,
+      "DN Mesafe %": 0.46,
+      "Buy_1H": "Hayır",
+      "Buy_4H": "Hayır",
+      "DN Yakınlık Gün": 2
+    }
+  ]
+}
