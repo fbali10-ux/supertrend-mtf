@@ -1,1 +1,15 @@
-{}
+{
+  "created_at": "09.05.2026 00:56",
+  "df_en": [],
+  "df_vol_filtered": [
+    {
+      "Hisse": "BERA",
+      "Son Kapanış": 18.2,
+      "MTF Skor": 2,
+      "DN Mesafe %": 0.27,
+      "Buy_1H": "Hayır",
+      "Buy_4H": "Hayır",
+      "DN Yakınlık Gün": 2
+    }
+  ]
+}
