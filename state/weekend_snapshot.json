@@ -1,1 +1,15 @@
-{}
+{
+  "created_at": "13.06.2026 00:27",
+  "df_en": [],
+  "df_vol_filtered": [
+    {
+      "Hisse": "SAFKR",
+      "Son Kapanış": 25.3,
+      "MTF Skor": 2,
+      "DN Mesafe %": 0.12,
+      "Buy_1H": "Hayır",
+      "Buy_4H": "Hayır",
+      "DN Yakınlık Gün": 2
+    }
+  ]
+}
