@@ -1,1 +1,15 @@
-{}
+{
+  "created_at": "05.09.2026 01:42",
+  "df_en": [],
+  "df_vol_filtered": [
+    {
+      "Hisse": "AGHOL",
+      "Son Kapanış": 32.98,
+      "MTF Skor": 2,
+      "DN Mesafe %": 0.49,
+      "Buy_1H": "Hayır",
+      "Buy_4H": "Hayır",
+      "DN Yakınlık Gün": 2
+    }
+  ]
+}
