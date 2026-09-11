@@ -1,1 +1,15 @@
-{}
+{
+  "created_at": "12.09.2026 00:31",
+  "df_en": [],
+  "df_vol_filtered": [
+    {
+      "Hisse": "MAGEN",
+      "Son Kapanış": 37.24,
+      "MTF Skor": 2,
+      "DN Mesafe %": 1.18,
+      "Buy_1H": "Hayır",
+      "Buy_4H": "Hayır",
+      "DN Yakınlık Gün": 2
+    }
+  ]
+}
