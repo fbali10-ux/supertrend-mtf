@@ -1,1 +1,15 @@
-{}
+{
+  "created_at": "26.09.2026 02:44",
+  "df_en": [
+    {
+      "Hisse": "EMNIS",
+      "Son Kapanış": 144.0,
+      "MTF Skor": 4,
+      "DN Mesafe %": 1.46,
+      "Buy_1H": "Evet",
+      "Buy_4H": "Evet",
+      "DN Yakınlık Gün": 2
+    }
+  ],
+  "df_vol_filtered": []
+}
