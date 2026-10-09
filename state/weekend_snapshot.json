@@ -1,1 +1,15 @@
-{}
+{
+  "created_at": "10.10.2026 02:48",
+  "df_en": [
+    {
+      "Hisse": "MARTI",
+      "Son Kapanış": 1.55,
+      "MTF Skor": 3,
+      "DN Mesafe %": 1.04,
+      "Buy_1H": "Evet",
+      "Buy_4H": "Hayır",
+      "DN Yakınlık Gün": 2
+    }
+  ],
+  "df_vol_filtered": []
+}
