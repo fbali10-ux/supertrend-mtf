@@ -1,1 +1,34 @@
-{}
+{
+  "created_at": "07.11.2026 01:35",
+  "df_en": [
+    {
+      "Hisse": "SODSN",
+      "Son Kapanış": 5.66,
+      "MTF Skor": 3,
+      "DN Mesafe %": 0.41,
+      "Buy_1H": "Hayır",
+      "Buy_4H": "Evet",
+      "DN Yakınlık Gün": 2
+    }
+  ],
+  "df_vol_filtered": [
+    {
+      "Hisse": "GOLTS",
+      "Son Kapanış": 225.5,
+      "MTF Skor": 2,
+      "DN Mesafe %": 0.4,
+      "Buy_1H": "Hayır",
+      "Buy_4H": "Hayır",
+      "DN Yakınlık Gün": 2
+    },
+    {
+      "Hisse": "ISCTR",
+      "Son Kapanış": 13.05,
+      "MTF Skor": 2,
+      "DN Mesafe %": 0.5,
+      "Buy_1H": "Hayır",
+      "Buy_4H": "Hayır",
+      "DN Yakınlık Gün": 2
+    }
+  ]
+}
