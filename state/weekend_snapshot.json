@@ -1,1 +1,25 @@
-{}
+{
+  "created_at": "14.11.2026 03:15",
+  "df_en": [
+    {
+      "Hisse": "CELHA",
+      "Son Kapanış": 30.0,
+      "MTF Skor": 3,
+      "DN Mesafe %": 0.07,
+      "Buy_1H": "Evet",
+      "Buy_4H": "Hayır",
+      "DN Yakınlık Gün": 4
+    }
+  ],
+  "df_vol_filtered": [
+    {
+      "Hisse": "ESCAR",
+      "Son Kapanış": 10.88,
+      "MTF Skor": 2,
+      "DN Mesafe %": 0.25,
+      "Buy_1H": "Hayır",
+      "Buy_4H": "Hayır",
+      "DN Yakınlık Gün": 2
+    }
+  ]
+}
